@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.30)
 project(posted)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTKLS REQUIRED IMPORTED_TARGET gtk4-layer-shell-0)
