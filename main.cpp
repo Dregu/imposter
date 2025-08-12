@@ -26,13 +26,16 @@ const char *note_exclusive;
 const char *note_text;
 const char *pen_color;
 
+class Imposter;
+Imposter *imposter = NULL;
+
 class Note {
 public:
   static void key_press(GtkEventControllerKey *self, guint keyval,
                         guint keycode, GdkModifierType state, gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
-    // if (keyval == GDK_KEY_Escape)
-    //   note->close();
+    if (keyval == GDK_KEY_Escape)
+      note->close();
   }
 
   static void middle_press(GtkGestureClick *gesture, int n_press, double x,
@@ -62,6 +65,8 @@ public:
                                                  gtk_widget_get_width(widget),
                                                  gtk_widget_get_height(widget));
       note->clear_surface();
+      note->nw = width;
+      note->nh = height;
     }
   }
 
@@ -112,6 +117,18 @@ public:
     note->draw_brush(note->drawing, note->draw_x + x, note->draw_y + y);
   }
 
+  void set_position(int x_, int y_) {
+    nx = x_;
+    ny = y_;
+    gtk_fixed_move(GTK_FIXED(notes), frame, nx, ny);
+  }
+
+  void set_size(int w_, int h_) {
+    nw = w_;
+    nh = h_;
+    gtk_widget_set_size_request(frame, nw, nh);
+  }
+
   static void drag_begin(GtkGestureDrag *gesture, double x, double y,
                          gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
@@ -122,12 +139,8 @@ public:
   static void drag_update(GtkGestureDrag *gesture, double x, double y,
                           gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
-    double wx;
-    double wy;
-    gtk_fixed_get_child_position(note->notes, note->frame, &wx, &wy);
-    gtk_fixed_move(note->notes, note->frame,
-                   wx + note->start_x + x - note_w / 2 + note_margin,
-                   wy + note->start_y + y - note_h / 2 + note_margin);
+    note->set_position(note->nx + note->start_x + x - note_w / 2 + note_margin,
+                       note->ny + note->start_y + y - note_h / 2 + note_margin);
   }
 
   static void drag_end(GtkGestureDrag *gesture, double x, double y,
@@ -135,26 +148,44 @@ public:
     auto note = reinterpret_cast<Note *>(data);
   }
 
-  void close(void) {
-    if (surface)
-      cairo_surface_destroy(surface);
+  static void enter(GtkEventControllerMotion *self, double x, double y,
+                    gpointer data) {
+    auto note = reinterpret_cast<Note *>(data);
+    gtk_widget_grab_focus(note->text_area);
   }
 
-  Note(GtkFixed *notes_) { notes = notes_; }
+  static void leave(GtkEventControllerMotion *self, double x, double y,
+                    gpointer data) {
+    auto note = reinterpret_cast<Note *>(data);
+  }
 
-  void create() {
+  void close(void) {
+    if (surface) {
+      cairo_surface_destroy(surface);
+      surface = NULL;
+    }
+    gtk_fixed_remove(GTK_FIXED(notes), frame);
+    deleted = true;
+  }
+
+  Note(GtkWindow *win_, GtkWidget *notes_) {
+    win = win_;
+    notes = notes_;
+  }
+
+  GtkWidget *create() {
     srand(time(0) + getpid());
     frame = gtk_frame_new(NULL);
     text_area = gtk_text_view_new();
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_area), GTK_WRAP_WORD_CHAR);
     gtk_widget_set_can_target(text_area, FALSE);
+    gtk_text_view_set_accepts_tab(GTK_TEXT_VIEW(text_area), FALSE);
     if (note_text) {
       auto *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
       gtk_text_buffer_set_text(buffer, note_text, -1);
     }
     drawing = gtk_drawing_area_new();
 
-    // gtk_widget_set_can_target(frame, TRUE);
     overlay = gtk_overlay_new();
     gtk_overlay_set_child(GTK_OVERLAY(overlay), text_area);
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), drawing);
@@ -175,12 +206,14 @@ public:
     gtk_widget_add_controller(drawing, GTK_EVENT_CONTROLLER(press));
     g_signal_connect(press, "pressed", G_CALLBACK(middle_press), this);
 
+    auto *motion = gtk_event_controller_motion_new();
+    gtk_widget_add_controller(GTK_WIDGET(frame), GTK_EVENT_CONTROLLER(motion));
+    g_signal_connect(motion, "enter", G_CALLBACK(enter), this);
+    g_signal_connect(motion, "leave", G_CALLBACK(leave), this);
+
     auto *keys = gtk_event_controller_key_new();
     gtk_widget_add_controller(GTK_WIDGET(frame), GTK_EVENT_CONTROLLER(keys));
     g_signal_connect(keys, "key-pressed", G_CALLBACK(key_press), this);
-
-    // gtk_layer_set_keyboard_mode(window,
-    //                             GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
 
     GtkGesture *drag = gtk_gesture_drag_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag),
@@ -190,11 +223,11 @@ public:
     g_signal_connect(drag, "drag-update", G_CALLBACK(drag_update), this);
     g_signal_connect(drag, "drag-end", G_CALLBACK(drag_end), this);
 
-    gtk_fixed_put(notes, frame, 100, 100);
-
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing), draw_cb, this,
                                    NULL);
     g_signal_connect_after(drawing, "resize", G_CALLBACK(resize_cb), this);
+
+    return frame;
   }
 
   cairo_surface_t *surface = NULL;
@@ -203,7 +236,8 @@ public:
   GtkWidget *text_area;
   GtkWidget *drawing;
   GtkWidget *overlay;
-  GtkFixed *notes;
+  GtkWidget *notes;
+  GtkWindow *win;
 
   double start_x;
   double start_y;
@@ -211,6 +245,13 @@ public:
   double draw_y;
   double prev_x;
   double prev_y;
+
+  int nx;
+  int ny;
+  int nw;
+  int nh;
+
+  bool deleted = false;
 };
 
 class Imposter {
@@ -218,100 +259,52 @@ public:
   static void key_press(GtkEventControllerKey *self, guint keyval,
                         guint keycode, GdkModifierType state, gpointer data) {
     auto win = reinterpret_cast<Imposter *>(data);
-    if (keyval == GDK_KEY_Escape) {
-      // gtk_window_destroy(win->window);
-      auto note = new Note(GTK_FIXED(win->fixed));
-      note->create();
-      win->notes.push_back(note);
+    if (keyval == GDK_KEY_Tab) {
+      win->note();
+    } else if (keyval == GDK_KEY_Escape) {
+      gtk_window_destroy(win->window);
     }
-  }
-
-  static void middle_press(GtkGestureClick *gesture, int n_press, double x,
-                           double y, gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    win->clear_surface();
-    gtk_widget_queue_draw(win->drawing);
-  }
-
-  void clear_surface() {
-    cairo_t *cr = cairo_create(surface);
-    cairo_set_source_rgba(cr, 1, 1, 1, 0);
-    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
-    cairo_paint(cr);
-    cairo_destroy(cr);
-  }
-
-  static void resize_cb(GtkWidget *widget, int width, int height,
-                        gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    if (win->surface) {
-      cairo_surface_destroy(win->surface);
-      win->surface = NULL;
-    }
-    if (gtk_native_get_surface(gtk_widget_get_native(widget))) {
-      win->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
-                                                gtk_widget_get_width(widget),
-                                                gtk_widget_get_height(widget));
-      win->clear_surface();
-    }
-  }
-
-  static void draw_cb(GtkDrawingArea *drawing_area, cairo_t *cr, int width,
-                      int height, gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    if (win->surface) {
-      cairo_set_source_surface(cr, win->surface, 0, 0);
-      cairo_paint(cr);
-    }
-  }
-
-  void draw_brush(GtkWidget *widget, double x, double y) {
-    if (!surface)
-      return;
-    GdkRGBA color;
-    gdk_rgba_parse(&color, pen_color ? pen_color : "#222");
-    cairo_t *cr = cairo_create(surface);
-    cairo_move_to(cr, prev_x + 2, prev_y + 2);
-    cairo_line_to(cr, x + 2, y + 2);
-    cairo_set_line_width(cr, 3.0);
-    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-    cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha);
-    cairo_stroke(cr);
-    cairo_destroy(cr);
-    gtk_widget_queue_draw(widget);
-    prev_x = x;
-    prev_y = y;
-  }
-
-  static void draw_begin(GtkGestureDrag *gesture, double x, double y,
-                         gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    win->draw_x = x;
-    win->draw_y = y;
-    win->prev_x = x;
-    win->prev_y = y;
-    win->draw_brush(win->drawing, x, y);
-  }
-
-  static void draw_update(GtkGestureDrag *gesture, double x, double y,
-                          gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    win->draw_brush(win->drawing, win->draw_x + x, win->draw_y + y);
-  }
-
-  static void draw_end(GtkGestureDrag *gesture, double x, double y,
-                       gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    win->draw_brush(win->drawing, win->draw_x + x, win->draw_y + y);
-  }
-
-  static void close(GtkWidget *widget, GdkEvent *, gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    // if (win->surface)
-    //   cairo_surface_destroy(win->surface);
   }
 
   Imposter(GtkApplication *app_, [[maybe_unused]] gpointer data) { app = app_; }
+
+  void fix_input_region() {
+    notes.erase(std::remove_if(std::begin(notes), std::end(notes),
+                               [](Note *n) { return n->deleted; }),
+                notes.end());
+    auto surf =
+        gtk_native_get_surface(gtk_widget_get_native(GTK_WIDGET(window)));
+    if (notes.empty()) {
+      gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+      // const auto rect = cairo_rectangle_int_t{1, 1, 1, 1};
+      // auto reg = cairo_region_create_rectangles(&rect, 1);
+      // gdk_surface_set_input_region(surf, reg);
+      return;
+    }
+    gtk_widget_set_visible(GTK_WIDGET(window), TRUE);
+    std::vector<cairo_rectangle_int_t> rectv;
+    for (auto n : notes)
+      rectv.push_back({n->nx, n->ny, n->nw, n->nh});
+    const cairo_rectangle_int_t *rects = &rectv[0];
+    auto reg = cairo_region_create_rectangles(rects, rectv.size());
+    gdk_surface_set_input_region(surf, reg);
+  }
+
+  static bool timer(gpointer data) {
+    auto win = reinterpret_cast<Imposter *>(data);
+    win->fix_input_region();
+    return true;
+  }
+
+  void note() {
+    auto note = new Note(window, fixed);
+    auto frame = note->create();
+    gtk_fixed_put(GTK_FIXED(fixed), frame, 0, 0);
+    note->set_position(100, 100);
+    note->set_size(220, 220);
+    notes.push_back(note);
+    fix_input_region();
+  }
 
   void create() {
     srand(time(0) + getpid());
@@ -325,7 +318,7 @@ public:
     GtkCssProvider *provider = gtk_css_provider_new();
     auto css = std::format(
         R""(
-window {{ background: alpha(white, 0.5); }}
+window {{ background: alpha(black, 0); }}
 frame {{ margin: {}px; border: none; transform: rotate({}deg); }}
 textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
 )"",
@@ -343,41 +336,18 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
     gtk_window_set_title(GTK_WINDOW(window), "posted");
 
     g_signal_connect(window, "destroy", G_CALLBACK(close), this);
-    frame = gtk_frame_new(NULL);
-    drawing = gtk_drawing_area_new();
-    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing), draw_cb, this,
-                                   NULL);
-    g_signal_connect_after(drawing, "resize", G_CALLBACK(resize_cb), this);
-
     fixed = gtk_fixed_new();
-    // gtk_widget_set_can_target(fixed, FALSE);
-    overlay = gtk_overlay_new();
-    gtk_overlay_set_child(GTK_OVERLAY(overlay), drawing);
-    gtk_overlay_add_overlay(GTK_OVERLAY(overlay), fixed);
-    gtk_frame_set_child(GTK_FRAME(frame), overlay);
-    gtk_window_set_child(GTK_WINDOW(window), frame);
-
-    // gtk_window_set_default_size(window, note_w + note_margin * 2,
-    //                             note_h + note_margin * 2);
-
-    GtkGesture *draw = gtk_gesture_drag_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(draw), GDK_BUTTON_PRIMARY);
-    gtk_widget_add_controller(drawing, GTK_EVENT_CONTROLLER(draw));
-    g_signal_connect(draw, "drag-begin", G_CALLBACK(draw_begin), this);
-    g_signal_connect(draw, "drag-update", G_CALLBACK(draw_update), this);
-    g_signal_connect(draw, "drag-end", G_CALLBACK(draw_end), this);
-
-    GtkGesture *press = gtk_gesture_click_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(press), GDK_BUTTON_MIDDLE);
-    gtk_widget_add_controller(drawing, GTK_EVENT_CONTROLLER(press));
-    g_signal_connect(press, "pressed", G_CALLBACK(middle_press), this);
-
-    auto *keys = gtk_event_controller_key_new();
-    gtk_widget_add_controller(GTK_WIDGET(window), GTK_EVENT_CONTROLLER(keys));
-    g_signal_connect(keys, "key-pressed", G_CALLBACK(key_press), this);
-
+    // GtkWidget *frame = gtk_frame_new(NULL);
+    // gtk_frame_set_child(GTK_FRAME(frame), fixed);
+    gtk_window_set_child(GTK_WINDOW(window), fixed);
     gtk_layer_set_keyboard_mode(window,
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+
+    // auto *keys = gtk_event_controller_key_new();
+    // gtk_widget_add_controller(GTK_WIDGET(window),
+    // GTK_EVENT_CONTROLLER(keys)); g_signal_connect(keys, "key-pressed",
+    // G_CALLBACK(key_press), this);
+
     if (!note_exclusive) {
       gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
       gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_RIGHT, TRUE);
@@ -398,6 +368,8 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
         gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
       }
     }
+    g_timeout_add(50, G_SOURCE_FUNC(timer), this);
+    note();
     gtk_window_present(window);
   }
 
@@ -407,10 +379,6 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
   cairo_surface_t *surface = NULL;
   GtkWindow *window;
   GdkDisplay *display;
-  GtkWidget *frame;
-  GtkWidget *text_area;
-  GtkWidget *drawing;
-  GtkWidget *overlay;
   GtkWidget *fixed;
 
   double start_x;
@@ -421,21 +389,21 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
   double prev_y;
 
   std::vector<Note *> notes;
-
-  int test;
-  // const char *pen_color;
 };
 
 static void signal_handler(int sig) {
-  /*if (sig == SIGUSR1)
-    gtk_layer_set_layer(window, gtk_layer_get_layer(window) ==
-                                        GTK_LAYER_SHELL_LAYER_OVERLAY
-                                    ? GTK_LAYER_SHELL_LAYER_BOTTOM
-                                    : GTK_LAYER_SHELL_LAYER_OVERLAY);
+  if (!imposter)
+    return;
+  if (sig == SIGUSR1)
+    gtk_layer_set_layer(imposter->window,
+                        gtk_layer_get_layer(imposter->window) ==
+                                GTK_LAYER_SHELL_LAYER_OVERLAY
+                            ? GTK_LAYER_SHELL_LAYER_BOTTOM
+                            : GTK_LAYER_SHELL_LAYER_OVERLAY);
   else if (sig == SIGUSR2)
-    gtk_layer_set_layer(window, GTK_LAYER_SHELL_LAYER_BOTTOM);
+    imposter->note();
   else if (sig == SIGTERM)
-    gtk_window_destroy(window);*/
+    gtk_window_destroy(imposter->window);
 }
 
 static int command_line(GApplication *app, GVariantDict *opts, void *) {
@@ -443,8 +411,8 @@ static int command_line(GApplication *app, GVariantDict *opts, void *) {
 }
 
 static void activate(GtkApplication *app, gpointer data) {
-  auto win = new Imposter(app, data);
-  win->create();
+  imposter = new Imposter(app, data);
+  imposter->create();
 }
 
 int main(int argc, char *argv[]) {
