@@ -1,4 +1,5 @@
 #include <format>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -25,9 +26,24 @@ const char *note_font;
 const char *note_exclusive;
 const char *note_text;
 const char *pen_color;
+int note_create = 0;
 
 class Imposter;
 Imposter *imposter = NULL;
+
+float rand_float(float low, float high) {
+  thread_local static std::random_device rd;
+  thread_local static std::mt19937 rng(rd());
+  thread_local std::uniform_real_distribution<float> urd;
+  return urd(rng, decltype(urd)::param_type{low, high});
+}
+
+int rand_int(int low, int high) {
+  thread_local static std::random_device rd;
+  thread_local static std::mt19937 rng(rd());
+  thread_local std::uniform_int_distribution<int> urd;
+  return urd(rng, decltype(urd)::param_type{low, high});
+}
 
 class Note {
 public:
@@ -174,9 +190,25 @@ public:
   }
 
   GtkWidget *create() {
-    srand(time(0) + getpid());
     frame = gtk_frame_new(NULL);
+    // GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(frame));
+    GtkCssProvider *provider = gtk_css_provider_new();
+    auto css = std::format(
+        R""(
+frame {{ margin: {}px; border: none; transform: rotate({}deg); }}
+textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
+)"",
+        note_margin, note_angle == FLT_MIN ? rand_float(-3.f, 3.f) : note_angle,
+        note_color ? note_color : "#222", note_font ? note_font : "Comic Neue",
+        note_bg ? note_bg : colors[rand_int(0, colors.size() - 1)]);
+    gtk_css_provider_load_from_string(provider, css.c_str());
     text_area = gtk_text_view_new();
+    auto ctx = gtk_widget_get_style_context(frame);
+    auto ctx2 = gtk_widget_get_style_context(text_area);
+    gtk_style_context_add_provider(ctx, GTK_STYLE_PROVIDER(provider),
+                                   GTK_STYLE_PROVIDER_PRIORITY_USER);
+    gtk_style_context_add_provider(ctx2, GTK_STYLE_PROVIDER(provider),
+                                   GTK_STYLE_PROVIDER_PRIORITY_USER);
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_area), GTK_WRAP_WORD_CHAR);
     gtk_widget_set_can_target(text_area, FALSE);
     gtk_text_view_set_accepts_tab(GTK_TEXT_VIEW(text_area), FALSE);
@@ -292,61 +324,53 @@ public:
 
   static bool timer(gpointer data) {
     auto win = reinterpret_cast<Imposter *>(data);
+    while (gtk_widget_get_width(win->fixed) > 0 &&
+           gtk_widget_get_height(win->fixed) > 0 && note_create > 0) {
+      win->note();
+      note_create--;
+    }
     win->fix_input_region();
     return true;
   }
 
   void note() {
+    gtk_widget_set_visible(GTK_WIDGET(window), TRUE);
     auto note = new Note(window, fixed);
     auto frame = note->create();
     gtk_fixed_put(GTK_FIXED(fixed), frame, 0, 0);
-    note->set_position(100, 100);
-    note->set_size(220, 220);
+    int x = gtk_widget_get_width(fixed) / 2 - note_w / 2;
+    int y = gtk_widget_get_height(fixed) / 2 - note_h / 2;
+    note->set_position(x, y);
+    note->set_size(note_w, note_h);
     notes.push_back(note);
     fix_input_region();
   }
 
   void create() {
-    srand(time(0) + getpid());
+    srand(time(0) + rand());
     window = GTK_WINDOW(gtk_application_window_new(app));
     gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
 
-    if (note_angle == FLT_MIN) {
-      note_angle = -2.f + static_cast<double>(rand()) /
-                              (static_cast<double>(RAND_MAX / (2.f - -2.f)));
-    }
     GtkCssProvider *provider = gtk_css_provider_new();
     auto css = std::format(
         R""(
 window {{ background: alpha(black, 0); }}
-frame {{ margin: {}px; border: none; transform: rotate({}deg); }}
-textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
-)"",
-        note_margin, note_angle, note_color ? note_color : "#222",
-        note_font ? note_font : "Comic Neue",
-        note_bg ? note_bg : colors[rand() % colors.size()]);
+)"");
     gtk_css_provider_load_from_string(provider, css.c_str());
     display = gtk_widget_get_display(GTK_WIDGET(window));
     gtk_style_context_add_provider_for_display(
         display, GTK_STYLE_PROVIDER(provider),
         GTK_STYLE_PROVIDER_PRIORITY_USER);
     gtk_layer_init_for_window(window);
-    gtk_layer_set_namespace(window, "posted");
+    gtk_layer_set_namespace(window, "imposter");
     gtk_layer_set_layer(window, GTK_LAYER_SHELL_LAYER_OVERLAY);
-    gtk_window_set_title(GTK_WINDOW(window), "posted");
+    gtk_window_set_title(GTK_WINDOW(window), "imposter");
 
-    g_signal_connect(window, "destroy", G_CALLBACK(close), this);
+    // g_signal_connect(window, "destroy", G_CALLBACK(close), this);
     fixed = gtk_fixed_new();
-    // GtkWidget *frame = gtk_frame_new(NULL);
-    // gtk_frame_set_child(GTK_FRAME(frame), fixed);
     gtk_window_set_child(GTK_WINDOW(window), fixed);
     gtk_layer_set_keyboard_mode(window,
                                 GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
-
-    // auto *keys = gtk_event_controller_key_new();
-    // gtk_widget_add_controller(GTK_WIDGET(window),
-    // GTK_EVENT_CONTROLLER(keys)); g_signal_connect(keys, "key-pressed",
-    // G_CALLBACK(key_press), this);
 
     if (!note_exclusive) {
       gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
@@ -369,11 +393,8 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
       }
     }
     g_timeout_add(50, G_SOURCE_FUNC(timer), this);
-    note();
     gtk_window_present(window);
   }
-
-  //~Imposter(void) { close(); }
 
   GtkApplication *app;
   cairo_surface_t *surface = NULL;
@@ -422,30 +443,32 @@ int main(int argc, char *argv[]) {
   GtkApplication *app = gtk_application_new(NULL, G_APPLICATION_DEFAULT_FLAGS);
 
   const GOptionEntry entries[] = {
+      {"num", 'n', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_create,
+       "Open n notes on launch (0)", NULL},
       {"xpos", 'x', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_x,
-       "X-position of the note", NULL},
+       "X-position of the initial notes (center)", NULL},
       {"ypos", 'y', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_y,
-       "Y-position of the note", NULL},
+       "Y-position of the initial notes (center)", NULL},
       {"width", 'w', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_w,
-       "Width of the note", NULL},
+       "Width of the notes (220)", NULL},
       {"height", 'h', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_h,
-       "Height of the note", NULL},
+       "Height of the notes (220)", NULL},
       {"margin", 'm', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_margin,
-       "Margin around the note", NULL},
+       "Margin around the notes (10)", NULL},
       {"angle", 'a', G_OPTION_FLAG_NONE, G_OPTION_ARG_DOUBLE, &note_angle,
-       "Angle of the note", NULL},
+       "Angle of the notes (random)", NULL},
       {"bg", 'b', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_bg,
-       "Color of the note", NULL},
+       "Color of the notes (random)", NULL},
       {"color", 'c', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_color,
-       "Color of the text", NULL},
+       "Color of the texts (#222)", NULL},
       {"pen", 'p', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &pen_color,
-       "Color of the pen", NULL},
+       "Color of the pen (#222)", NULL},
       {"font", 'f', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_font,
-       "Font of the text", NULL},
+       "Font of the text (Comic Neue)", NULL},
       {"text", 't', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_text,
-       "Text on the note", NULL},
+       "Text on the initial note", NULL},
       {"exclusive", 'e', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING,
-       &note_exclusive, "Put note in exclusive area on screen edge", "l|r|t|b"},
+       &note_exclusive, "Reserve exclusive area on screen edge", "l|r|t|b"},
       {NULL}};
   g_application_add_main_option_entries(G_APPLICATION(app), entries);
   g_application_set_option_context_summary(
@@ -453,14 +476,14 @@ int main(int argc, char *argv[]) {
       "Little colorful gtk4-layer-shell notes you can write and draw on.");
   g_application_set_option_context_description(G_APPLICATION(app),
                                                R""(Signals:
-  pkill -SIGUSR1 posted       Toggle between overlay and bottom layer
-  pkill -SIGUSR2 posted       Send note to bottom layer
+  pkill -SIGUSR1 imposter     Toggle between overlay and bottom layer
+  pkill -SIGUSR2 imposter     Create a new note
 
 Controls:
-  Mouse Left                  Draw on the note
-  Mouse Right                 Move the note around
+  Mouse Left                  Draw on a note
+  Mouse Right                 Move a note around
   Mouse Middle                Clear drawing
-  Escape                      Destroy the note
+  Escape                      Destroy a note
 )"");
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
   g_signal_connect(G_APPLICATION(app), "handle-local-options",

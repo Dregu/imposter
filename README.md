@@ -1,11 +1,11 @@
-# posted
+# imposter
 
 Little colorful gtk4-layer-shell notes you can write and draw on.
 
 ## Usage
 
 ```
-posted --help
+imposter --help
 ```
 
 ## Build
