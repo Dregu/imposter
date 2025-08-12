@@ -5,8 +5,16 @@
 #include <gtk4-layer-shell.h>
 #include <signal.h>
 
+static cairo_surface_t *surface = NULL;
+
 static double start_x;
 static double start_y;
+static double draw_x;
+static double draw_y;
+static double prev_x;
+static double prev_y;
+static const char *pen_color;
+
 static const std::array colors{
     "#7dab60", "#fecf37", "#ffbdce", "#fe8898", "#1f99f6", "#a1e9e3", "#36d1d1",
     "#fed523", "#fddae3", "#ffab8f", "#f9969e", "#ff9a5a", "#4ad3d3", "#fe74a5",
@@ -26,6 +34,68 @@ static const char *note_font;
 static const char *note_exclusive;
 static const char *note_text;
 GtkWindow *window;
+
+static void clear_surface(void) {
+  cairo_t *cr = cairo_create(surface);
+  cairo_set_source_rgba(cr, 1, 1, 1, 0);
+  cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+  cairo_paint(cr);
+  cairo_destroy(cr);
+}
+
+static void resize_cb(GtkWidget *widget, int width, int height, gpointer data) {
+  if (surface) {
+    cairo_surface_destroy(surface);
+    surface = NULL;
+  }
+  if (gtk_native_get_surface(gtk_widget_get_native(widget))) {
+    surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                         gtk_widget_get_width(widget),
+                                         gtk_widget_get_height(widget));
+    clear_surface();
+  }
+}
+
+static void draw_cb(GtkDrawingArea *drawing_area, cairo_t *cr, int width,
+                    int height, gpointer data) {
+  cairo_set_source_surface(cr, surface, 0, 0);
+  cairo_paint(cr);
+}
+
+static void draw_brush(GtkWidget *widget, double x, double y) {
+  GdkRGBA color;
+  gdk_rgba_parse(&color, pen_color ? pen_color : "#222");
+  cairo_t *cr = cairo_create(surface);
+  cairo_move_to(cr, prev_x + 2, prev_y + 2);
+  cairo_line_to(cr, x + 2, y + 2);
+  cairo_set_line_width(cr, 3.0);
+  cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+  cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha);
+  cairo_stroke(cr);
+  cairo_destroy(cr);
+  gtk_widget_queue_draw(widget);
+  prev_x = x;
+  prev_y = y;
+}
+
+static void draw_begin(GtkGestureDrag *gesture, double x, double y,
+                       GtkWidget *area) {
+  draw_x = x;
+  draw_y = y;
+  prev_x = x;
+  prev_y = y;
+  draw_brush(area, x, y);
+}
+
+static void draw_update(GtkGestureDrag *gesture, double x, double y,
+                        GtkWidget *area) {
+  draw_brush(area, draw_x + x, draw_y + y);
+}
+
+static void draw_end(GtkGestureDrag *gesture, double x, double y,
+                     GtkWidget *area) {
+  draw_brush(area, draw_x + x, draw_y + y);
+}
 
 static void drag_begin(GtkGestureDrag *gesture, double x, double y,
                        GtkWidget *area) {
@@ -51,7 +121,10 @@ static void drag_update(GtkGestureDrag *gesture, double x, double y,
 static void drag_end(GtkGestureDrag *gesture, double x, double y,
                      GtkWidget *area) {}
 
-static void close_window(void) {}
+static void close_window(void) {
+  if (surface)
+    cairo_surface_destroy(surface);
+}
 
 static void signal_handler(int sig) {
   if (sig == SIGUSR1)
@@ -71,6 +144,12 @@ static void key_press(GtkEventControllerKey *self, guint keyval, guint keycode,
     gtk_window_destroy(window);
 }
 
+static void middle_press(GtkGestureClick *gesture, int n_press, double x,
+                         double y, GtkWidget *area) {
+  clear_surface();
+  gtk_widget_queue_draw(area);
+}
+
 static void activate(GtkApplication *app, [[maybe_unused]] gpointer user_data) {
   srand(time(0) + getpid());
   if (note_angle == FLT_MIN) {
@@ -82,7 +161,7 @@ static void activate(GtkApplication *app, [[maybe_unused]] gpointer user_data) {
   GtkCssProvider *provider = gtk_css_provider_new();
   auto css = std::format(
       R""(
-window {{ background: rgba(0, 0, 0, 0); }}
+window {{ background: alpha(black, 0); }}
 frame {{ margin: {}px; border: none; transform: rotate({}deg); }}
 textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
 )"",
@@ -99,25 +178,46 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
   gtk_window_set_title(GTK_WINDOW(window), "posted");
   g_signal_connect(window, "destroy", G_CALLBACK(close_window), NULL);
   GtkWidget *frame = gtk_frame_new(NULL);
-  gtk_window_set_child(GTK_WINDOW(window), frame);
   GtkWidget *text_area = gtk_text_view_new();
   gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_area), GTK_WRAP_WORD_CHAR);
   gtk_text_view_set_extra_menu(GTK_TEXT_VIEW(text_area), NULL);
   gtk_widget_set_can_target(text_area, FALSE);
-  gtk_frame_set_child(GTK_FRAME(frame), text_area);
   if (note_text) {
     auto *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
     gtk_text_buffer_set_text(buffer, note_text, -1);
   }
+  GtkWidget *drawing = gtk_drawing_area_new();
+  gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing), draw_cb, NULL,
+                                 NULL);
+  g_signal_connect_after(drawing, "resize", G_CALLBACK(resize_cb), NULL);
+  GtkWidget *overlay = gtk_overlay_new();
+  gtk_overlay_set_child(GTK_OVERLAY(overlay), text_area);
+  gtk_overlay_add_overlay(GTK_OVERLAY(overlay), drawing);
+
+  gtk_frame_set_child(GTK_FRAME(frame), overlay);
+  gtk_window_set_child(GTK_WINDOW(window), frame);
+
   gtk_window_set_default_size(window, note_w + note_margin * 2,
                               note_h + note_margin * 2);
 
   GtkGesture *drag = gtk_gesture_drag_new();
-  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), GDK_BUTTON_PRIMARY);
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), GDK_BUTTON_SECONDARY);
   gtk_widget_add_controller(frame, GTK_EVENT_CONTROLLER(drag));
   g_signal_connect(drag, "drag-begin", G_CALLBACK(drag_begin), frame);
   g_signal_connect(drag, "drag-update", G_CALLBACK(drag_update), frame);
   g_signal_connect(drag, "drag-end", G_CALLBACK(drag_end), frame);
+
+  GtkGesture *draw = gtk_gesture_drag_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(draw), GDK_BUTTON_PRIMARY);
+  gtk_widget_add_controller(drawing, GTK_EVENT_CONTROLLER(draw));
+  g_signal_connect(draw, "drag-begin", G_CALLBACK(draw_begin), drawing);
+  g_signal_connect(draw, "drag-update", G_CALLBACK(draw_update), drawing);
+  g_signal_connect(draw, "drag-end", G_CALLBACK(draw_end), drawing);
+
+  GtkGesture *press = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(press), GDK_BUTTON_MIDDLE);
+  gtk_widget_add_controller(drawing, GTK_EVENT_CONTROLLER(press));
+  g_signal_connect(press, "pressed", G_CALLBACK(middle_press), drawing);
 
   auto *keys = gtk_event_controller_key_new();
   gtk_widget_add_controller(frame, GTK_EVENT_CONTROLLER(keys));
@@ -125,12 +225,10 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
 
   gtk_layer_set_keyboard_mode(window, GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
   if (!note_exclusive) {
-    if (note_x > note_w / 2) {
+    if (note_x != 0 || note_y != 0) {
       gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
       gtk_layer_set_margin(window, GTK_LAYER_SHELL_EDGE_LEFT,
                            note_x - note_w / 2);
-    }
-    if (note_y > note_h / 2) {
       gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_TOP, TRUE);
       gtk_layer_set_margin(window, GTK_LAYER_SHELL_EDGE_TOP,
                            note_y - note_h / 2);
@@ -181,8 +279,10 @@ int main(int argc, char *argv[]) {
        "Color of the note", NULL},
       {"color", 'c', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_color,
        "Color of the text", NULL},
+      {"pen", 'p', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &pen_color,
+       "Color of the pen", NULL},
       {"font", 'f', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_font,
-       "Font of the note", NULL},
+       "Font of the text", NULL},
       {"text", 't', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_text,
        "Text on the note", NULL},
       {"exclusive", 'e', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING,
@@ -190,13 +290,17 @@ int main(int argc, char *argv[]) {
       {NULL}};
   g_application_add_main_option_entries(G_APPLICATION(app), entries);
   g_application_set_option_context_summary(
-      G_APPLICATION(app), "Open a little colorful note on screen.");
+      G_APPLICATION(app),
+      "Little colorful gtk4-layer-shell notes you can write and draw on.");
   g_application_set_option_context_description(G_APPLICATION(app),
                                                R""(Signals:
   pkill -SIGUSR1 posted       Toggle between overlay and bottom layer
   pkill -SIGUSR2 posted       Send note to bottom layer
 
-Keys:
+Controls:
+  Mouse Left                  Draw on the note
+  Mouse Right                 Move the note around
+  Mouse Middle                Clear drawing
   Escape                      Destroy the note
 )"");
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
