@@ -1,3 +1,4 @@
+#include <cstring>
 #include <format>
 #include <random>
 #include <string>
@@ -25,7 +26,9 @@ const char *note_color;
 const char *note_font;
 const char *note_exclusive;
 const char *note_text;
-const char *pen_color;
+const char *note_pen_color;
+const char *note_output;
+const char *note_gravity;
 int note_create = 0;
 
 class Imposter;
@@ -97,7 +100,7 @@ public:
 
   void draw_brush(GtkWidget *widget, double x, double y) {
     GdkRGBA color;
-    gdk_rgba_parse(&color, pen_color ? pen_color : "#222");
+    gdk_rgba_parse(&color, note_pen_color ? note_pen_color : "#222");
     cairo_t *cr = cairo_create(surface);
     cairo_move_to(cr, prev_x + 2, prev_y + 2);
     cairo_line_to(cr, x + 2, y + 2);
@@ -196,10 +199,11 @@ public:
     auto css = std::format(
         R""(
 frame {{ margin: {}px; border: none; transform: rotate({}deg); }}
-textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
+textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
 )"",
         note_margin, note_angle == FLT_MIN ? rand_float(-3.f, 3.f) : note_angle,
-        note_color ? note_color : "#222", note_font ? note_font : "Comic Neue",
+        note_color ? note_color : "#222",
+        note_font ? note_font : "bold 1.5em 'Comic Neue'",
         note_bg ? note_bg : colors[rand_int(0, colors.size() - 1)]);
     gtk_css_provider_load_from_string(provider, css.c_str());
     text_area = gtk_text_view_new();
@@ -215,6 +219,7 @@ textview {{ color: {}; font-size: 1.5em; font-family: "{}"; font-weight: bold; p
     if (note_text) {
       auto *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
       gtk_text_buffer_set_text(buffer, note_text, -1);
+      note_text = NULL;
     }
     drawing = gtk_drawing_area_new();
 
@@ -308,6 +313,7 @@ public:
         gtk_native_get_surface(gtk_widget_get_native(GTK_WIDGET(window)));
     if (notes.empty()) {
       gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+      gtk_window_set_default_size(window, -1, -1);
       // const auto rect = cairo_rectangle_int_t{1, 1, 1, 1};
       // auto reg = cairo_region_create_rectangles(&rect, 1);
       // gdk_surface_set_input_region(surf, reg);
@@ -333,11 +339,13 @@ public:
   }
 
   void note() {
+    gtk_widget_set_visible(GTK_WIDGET(window), TRUE);
     auto surf =
         gtk_native_get_surface(gtk_widget_get_native(GTK_WIDGET(window)));
-    auto monitor = gdk_display_get_monitor_at_surface(display, surf);
+    auto mon =
+        monitor ? monitor : gdk_display_get_monitor_at_surface(display, surf);
     GdkRectangle geometry;
-    gdk_monitor_get_geometry(monitor, &geometry);
+    gdk_monitor_get_geometry(mon, &geometry);
     int tw = geometry.width;
     int th = geometry.height;
     if (note_exclusive) {
@@ -348,16 +356,26 @@ public:
         tw = note_w;
         gtk_layer_set_exclusive_zone(window, note_w + note_margin);
       }
+    } else if (note_gravity) {
+      if (strstr(note_gravity, "t") || strstr(note_gravity, "b")) {
+        th = note_h;
+      } else if (strstr(note_gravity, "l") || strstr(note_gravity, "r")) {
+        tw = note_w;
+      }
     }
     int tx = tw / 2 - note_w / 2;
     int ty = th / 2 - note_h / 2;
     if (note_exclusive) {
       if (strstr(note_exclusive, "b"))
-        ty = geometry.height - ty;
+        ty = geometry.height - note_h - note_margin;
       else if (strstr(note_exclusive, "r"))
-        tx = geometry.width - tx;
+        tx = geometry.width - note_w - note_margin;
+    } else if (note_gravity) {
+      if (strstr(note_gravity, "b"))
+        ty = geometry.height - note_h - note_margin;
+      else if (strstr(note_gravity, "r"))
+        tx = geometry.width - note_w - note_margin;
     }
-    gtk_widget_set_visible(GTK_WIDGET(window), TRUE);
     auto note = new Note(window, fixed);
     auto frame = note->create();
     // gtk_widget_set_size_request(fixed, geometry.width, geometry.height);
@@ -372,6 +390,7 @@ public:
   void create() {
     srand(time(0) + rand());
     window = GTK_WINDOW(gtk_application_window_new(app));
+
     gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
 
     GtkCssProvider *provider = gtk_css_provider_new();
@@ -385,6 +404,20 @@ window {{ background: alpha(black, 0); }}
         display, GTK_STYLE_PROVIDER(provider),
         GTK_STYLE_PROVIDER_PRIORITY_USER);
     gtk_layer_init_for_window(window);
+
+    if (note_output) {
+      auto list = gdk_display_get_monitors(display);
+      for (guint i = 0; i < g_list_model_get_n_items(list); i++) {
+        auto mon =
+            reinterpret_cast<GdkMonitor *>(g_list_model_get_item(list, i));
+        auto connector = gdk_monitor_get_connector(mon);
+        if (std::strcmp(connector, note_output) == 0) {
+          gtk_layer_set_monitor(window, mon);
+          monitor = mon;
+        }
+      }
+    }
+
     gtk_layer_set_namespace(window, "imposter");
     gtk_layer_set_layer(window, GTK_LAYER_SHELL_LAYER_OVERLAY);
     gtk_window_set_title(GTK_WINDOW(window), "imposter");
@@ -417,11 +450,12 @@ window {{ background: alpha(black, 0); }}
       gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
   }
 
-  GtkApplication *app;
+  GtkApplication *app = NULL;
   cairo_surface_t *surface = NULL;
-  GtkWindow *window;
-  GdkDisplay *display;
-  GtkWidget *fixed;
+  GtkWindow *window = NULL;
+  GdkDisplay *display = NULL;
+  GdkMonitor *monitor = NULL;
+  GtkWidget *fixed = NULL;
 
   double start_x;
   double start_y;
@@ -482,14 +516,18 @@ int main(int argc, char *argv[]) {
        "Color of the notes (random)", NULL},
       {"color", 'c', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_color,
        "Color of the text (#222)", NULL},
-      {"pen", 'p', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &pen_color,
+      {"pen", 'p', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_pen_color,
        "Color of the pen (#222)", NULL},
       {"font", 'f', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_font,
-       "Font of the text (Comic Neue)", NULL},
+       "Font of the text (bold 1.5em 'Comic Neue')", NULL},
       {"text", 't', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_text,
-       "Text on the initial note", NULL},
+       "Text on the first note", NULL},
       {"exclusive", 'e', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING,
        &note_exclusive, "Reserve exclusive area on screen edge", "l|r|t|b"},
+      {"gravity", 'g', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_gravity,
+       "Stick notes on specific edge (center)", "l|r|t|b"},
+      {"output", 'o', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_output,
+       "Monitor output name", NULL},
       {NULL}};
   g_application_add_main_option_entries(G_APPLICATION(app), entries);
   g_application_set_option_context_summary(
