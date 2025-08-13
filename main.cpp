@@ -324,8 +324,7 @@ public:
 
   static bool timer(gpointer data) {
     auto win = reinterpret_cast<Imposter *>(data);
-    while (gtk_widget_get_width(win->fixed) > 0 &&
-           gtk_widget_get_height(win->fixed) > 0 && note_create > 0) {
+    while (note_create > 0) {
       win->note();
       note_create--;
     }
@@ -334,13 +333,37 @@ public:
   }
 
   void note() {
+    auto surf =
+        gtk_native_get_surface(gtk_widget_get_native(GTK_WIDGET(window)));
+    auto monitor = gdk_display_get_monitor_at_surface(display, surf);
+    GdkRectangle geometry;
+    gdk_monitor_get_geometry(monitor, &geometry);
+    int tw = geometry.width;
+    int th = geometry.height;
+    if (note_exclusive) {
+      if (strstr(note_exclusive, "t") || strstr(note_exclusive, "b")) {
+        th = note_h;
+        gtk_layer_set_exclusive_zone(window, note_h + note_margin);
+      } else if (strstr(note_exclusive, "l") || strstr(note_exclusive, "r")) {
+        tw = note_w;
+        gtk_layer_set_exclusive_zone(window, note_w + note_margin);
+      }
+    }
+    int tx = tw / 2 - note_w / 2;
+    int ty = th / 2 - note_h / 2;
+    if (note_exclusive) {
+      if (strstr(note_exclusive, "b"))
+        ty = geometry.height - ty;
+      else if (strstr(note_exclusive, "r"))
+        tx = geometry.width - tx;
+    }
     gtk_widget_set_visible(GTK_WIDGET(window), TRUE);
     auto note = new Note(window, fixed);
     auto frame = note->create();
+    // gtk_widget_set_size_request(fixed, geometry.width, geometry.height);
+    gtk_window_set_default_size(window, geometry.width, geometry.height);
     gtk_fixed_put(GTK_FIXED(fixed), frame, 0, 0);
-    int x = gtk_widget_get_width(fixed) / 2 - note_w / 2;
-    int y = gtk_widget_get_height(fixed) / 2 - note_h / 2;
-    note->set_position(x, y);
+    note->set_position(tx, ty);
     note->set_size(note_w, note_h);
     notes.push_back(note);
     fix_input_region();
@@ -379,21 +402,19 @@ window {{ background: alpha(black, 0); }}
       gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
     } else {
       if (strstr(note_exclusive, "l")) {
-        gtk_layer_set_exclusive_zone(window, note_w + note_margin);
         gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
       } else if (strstr(note_exclusive, "r")) {
-        gtk_layer_set_exclusive_zone(window, note_w + note_margin);
         gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_RIGHT, TRUE);
       } else if (strstr(note_exclusive, "t")) {
-        gtk_layer_set_exclusive_zone(window, note_h + note_margin);
         gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_TOP, TRUE);
       } else if (strstr(note_exclusive, "b")) {
-        gtk_layer_set_exclusive_zone(window, note_h + note_margin);
         gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
       }
     }
     g_timeout_add(50, G_SOURCE_FUNC(timer), this);
     gtk_window_present(window);
+    if (!note_create)
+      gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
   }
 
   GtkApplication *app;
@@ -445,10 +466,10 @@ int main(int argc, char *argv[]) {
   const GOptionEntry entries[] = {
       {"num", 'n', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_create,
        "Open n notes on launch (0)", NULL},
-      {"xpos", 'x', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_x,
+      /*{"xpos", 'x', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_x,
        "X-position of the initial notes (center)", NULL},
       {"ypos", 'y', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_y,
-       "Y-position of the initial notes (center)", NULL},
+       "Y-position of the initial notes (center)", NULL},*/
       {"width", 'w', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_w,
        "Width of the notes (220)", NULL},
       {"height", 'h', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_h,
@@ -460,7 +481,7 @@ int main(int argc, char *argv[]) {
       {"bg", 'b', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_bg,
        "Color of the notes (random)", NULL},
       {"color", 'c', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_color,
-       "Color of the texts (#222)", NULL},
+       "Color of the text (#222)", NULL},
       {"pen", 'p', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &pen_color,
        "Color of the pen (#222)", NULL},
       {"font", 'f', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_font,
