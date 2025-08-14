@@ -54,6 +54,15 @@ int rand_int(int low, int high) {
   return urd(rng, decltype(urd)::param_type{low, high});
 }
 
+void replace(std::string &subject, const std::string &search,
+             const std::string &replace) {
+  size_t pos = 0;
+  while ((pos = subject.find(search, pos)) != std::string::npos) {
+    subject.replace(pos, search.length(), replace);
+    pos += replace.length();
+  }
+}
+
 class Note {
 public:
   static void key_press(GtkEventControllerKey *self, guint keyval,
@@ -229,7 +238,9 @@ textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bo
     gtk_text_view_set_accepts_tab(GTK_TEXT_VIEW(text_area), FALSE);
     if (note_text) {
       auto *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_area));
-      gtk_text_buffer_set_text(buffer, note_text, -1);
+      std::string text(note_text);
+      replace(text, "\\n", "\n");
+      gtk_text_buffer_set_text(buffer, text.c_str(), -1);
       note_text = NULL;
     }
     drawing = gtk_drawing_area_new();
