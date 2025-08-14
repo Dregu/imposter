@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstring>
 #include <format>
 #include <random>
@@ -19,7 +20,10 @@ int note_x = 0;
 int note_y = 0;
 int note_w = 220;
 int note_h = 220;
-int note_margin = 10;
+int extra_margin = 10;
+int note_margin = 0;
+int note_index = 0;
+int note_create = 0;
 double note_angle = FLT_MIN;
 const char *note_bg;
 const char *note_color;
@@ -29,7 +33,9 @@ const char *note_text;
 const char *note_pen_color;
 const char *note_output;
 const char *note_gravity;
-int note_create = 0;
+const char *note_organize;
+
+int monitor_w, monitor_h;
 
 class Imposter;
 Imposter *imposter = NULL;
@@ -137,8 +143,9 @@ public:
   }
 
   void set_position(int x_, int y_) {
-    nx = x_;
-    ny = y_;
+    nx = std::clamp(x_, 0, monitor_w - note_w);
+    ny = std::clamp(y_, 0, monitor_h - note_h);
+    ;
     gtk_fixed_move(GTK_FIXED(notes), frame, nx, ny);
   }
 
@@ -158,13 +165,15 @@ public:
   static void drag_update(GtkGestureDrag *gesture, double x, double y,
                           gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
-    note->set_position(note->nx + note->start_x + x - note_w / 2 + note_margin,
-                       note->ny + note->start_y + y - note_h / 2 + note_margin);
+    note->set_position(note->nx + note->start_x + x - note_w / 2 + extra_margin,
+                       note->ny + note->start_y + y - note_h / 2 +
+                           extra_margin);
   }
 
   static void drag_end(GtkGestureDrag *gesture, double x, double y,
                        gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
+    note_index = 0;
   }
 
   static void enter(GtkEventControllerMotion *self, double x, double y,
@@ -185,6 +194,7 @@ public:
     }
     gtk_fixed_remove(GTK_FIXED(notes), frame);
     deleted = true;
+    note_index = 0;
   }
 
   Note(GtkWindow *win_, GtkWidget *notes_) {
@@ -201,7 +211,8 @@ public:
 frame {{ margin: {}px; border: none; transform: rotate({}deg); }}
 textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
 )"",
-        note_margin, note_angle == FLT_MIN ? rand_float(-3.f, 3.f) : note_angle,
+        extra_margin,
+        note_angle == FLT_MIN ? rand_float(-3.f, 3.f) : note_angle,
         note_color ? note_color : "#222",
         note_font ? note_font : "bold 1.5em 'Comic Neue'",
         note_bg ? note_bg : colors[rand_int(0, colors.size() - 1)]);
@@ -228,8 +239,8 @@ textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bo
     gtk_overlay_add_overlay(GTK_OVERLAY(overlay), drawing);
     gtk_frame_set_child(GTK_FRAME(frame), overlay);
 
-    gtk_widget_set_size_request(frame, note_w + note_margin * 2,
-                                note_h + note_margin * 2);
+    gtk_widget_set_size_request(frame, note_w + extra_margin * 2,
+                                note_h + extra_margin * 2);
 
     GtkGesture *draw = gtk_gesture_drag_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(draw), GDK_BUTTON_PRIMARY);
@@ -348,6 +359,8 @@ public:
     gdk_monitor_get_geometry(mon, &geometry);
     int tw = geometry.width;
     int th = geometry.height;
+    monitor_w = tw;
+    monitor_h = th;
     if (note_exclusive) {
       if (strstr(note_exclusive, "t") || strstr(note_exclusive, "b")) {
         th = note_h;
@@ -356,7 +369,8 @@ public:
         tw = note_w;
         gtk_layer_set_exclusive_zone(window, note_w + note_margin);
       }
-    } else if (note_gravity) {
+    }
+    if (note_gravity) {
       if (strstr(note_gravity, "t") || strstr(note_gravity, "b")) {
         th = note_h;
       } else if (strstr(note_gravity, "l") || strstr(note_gravity, "r")) {
@@ -370,11 +384,40 @@ public:
         ty = geometry.height - note_h - note_margin;
       else if (strstr(note_exclusive, "r"))
         tx = geometry.width - note_w - note_margin;
-    } else if (note_gravity) {
-      if (strstr(note_gravity, "b"))
-        ty = geometry.height - note_h - note_margin;
+    }
+    if (note_gravity) {
+      if (strstr(note_gravity, "l"))
+        tx = note_margin;
       else if (strstr(note_gravity, "r"))
         tx = geometry.width - note_w - note_margin;
+      if (strstr(note_gravity, "t"))
+        ty = note_margin;
+      else if (strstr(note_gravity, "b"))
+        ty = geometry.height - note_h - note_margin;
+    }
+    if (note_organize && note_index > 0) {
+      int offset_x = 0;
+      int offset_y = 0;
+      if (std::strcmp(note_organize, "l") == 0)
+        offset_x = -note_index;
+      else if (std::strcmp(note_organize, "r") == 0)
+        offset_x = note_index;
+      else if (std::strcmp(note_organize, "t") == 0)
+        offset_y = -note_index;
+      else if (std::strcmp(note_organize, "b") == 0)
+        offset_y = note_index;
+      else if (std::strcmp(note_organize, "lr") == 0)
+        offset_x = (note_index % 2 == 0 ? 1 : -1) * ((note_index + 1) / 2);
+      else if (std::strcmp(note_organize, "tb") == 0)
+        offset_y = (note_index % 2 == 0 ? 1 : -1) * ((note_index + 1) / 2);
+      else if (std::strcmp(note_organize, "rl") == 0)
+        offset_x = (note_index % 2 == 0 ? -1 : 1) * ((note_index + 1) / 2);
+      else if (std::strcmp(note_organize, "bt") == 0)
+        offset_y = (note_index % 2 == 0 ? -1 : 1) * ((note_index + 1) / 2);
+      offset_x *= (note_w + extra_margin / 2);
+      offset_y *= (note_h + extra_margin / 2);
+      tx += offset_x;
+      ty += offset_y;
     }
     auto note = new Note(window, fixed);
     auto frame = note->create();
@@ -384,6 +427,7 @@ public:
     note->set_position(tx, ty);
     note->set_size(note_w, note_h);
     notes.push_back(note);
+    note_index++;
     fix_input_region();
   }
 
@@ -509,7 +553,7 @@ int main(int argc, char *argv[]) {
       {"height", 'h', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_h,
        "Height of the notes (220)", NULL},
       {"margin", 'm', G_OPTION_FLAG_NONE, G_OPTION_ARG_INT, &note_margin,
-       "Margin around the notes (10)", NULL},
+       "Margin between notes and screen edge (0)", NULL},
       {"angle", 'a', G_OPTION_FLAG_NONE, G_OPTION_ARG_DOUBLE, &note_angle,
        "Angle of the notes (random)", NULL},
       {"bg", 'b', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_bg,
@@ -523,9 +567,11 @@ int main(int argc, char *argv[]) {
       {"text", 't', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_text,
        "Text on the first note", NULL},
       {"exclusive", 'e', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING,
-       &note_exclusive, "Reserve exclusive area on screen edge", "l|r|t|b"},
+       &note_exclusive, "Reserve exclusive zone on screen edge", "l|r|t|b"},
       {"gravity", 'g', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_gravity,
-       "Stick notes on specific edge (center)", "l|r|t|b"},
+       "Stick notes on specific screen edge (center)", "l|r|t|b|tl..."},
+      {"organize", 'z', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_organize,
+       "Add new note next to previous one in direction", "l|r|t|b|rl|bt"},
       {"output", 'o', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_output,
        "Monitor output name", NULL},
       {NULL}};
@@ -535,14 +581,14 @@ int main(int argc, char *argv[]) {
       "Little colorful gtk4-layer-shell notes you can write and draw on.");
   g_application_set_option_context_description(G_APPLICATION(app),
                                                R""(Signals:
-  pkill -SIGUSR1 imposter     Toggle between overlay and bottom layer
-  pkill -SIGUSR2 imposter     Create a new note
+  pkill -SIGUSR1 imposter          Toggle between overlay and bottom layer
+  pkill -SIGUSR2 imposter          Create a new note
 
 Controls:
-  Mouse Left                  Draw on a note
-  Mouse Right                 Move a note around
-  Mouse Middle                Clear drawing
-  Escape                      Destroy a note
+  Mouse Left                       Draw on a note
+  Mouse Right                      Move a note around
+  Mouse Middle                     Clear drawing
+  Escape                           Destroy a note
 )"");
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
   g_signal_connect(G_APPLICATION(app), "handle-local-options",
