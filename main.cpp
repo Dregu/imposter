@@ -364,6 +364,7 @@ public:
     gtk_widget_set_visible(GTK_WIDGET(window), TRUE);
     auto surf =
         gtk_native_get_surface(gtk_widget_get_native(GTK_WIDGET(window)));
+    // TODO: fix multi monitor switching
     auto mon =
         monitor ? monitor : gdk_display_get_monitor_at_surface(display, surf);
     GdkRectangle geometry;
@@ -460,8 +461,10 @@ window {{ background: alpha(black, 0); }}
         GTK_STYLE_PROVIDER_PRIORITY_USER);
     gtk_layer_init_for_window(window);
 
-    if (note_output) {
-      auto list = gdk_display_get_monitors(display);
+    auto list = gdk_display_get_monitors(display);
+    if (g_list_model_get_n_items(list) == 1) {
+      monitor = reinterpret_cast<GdkMonitor *>(g_list_model_get_item(list, 0));
+    } else if (note_output) {
       for (guint i = 0; i < g_list_model_get_n_items(list); i++) {
         auto mon =
             reinterpret_cast<GdkMonitor *>(g_list_model_get_item(list, i));
@@ -567,6 +570,7 @@ int main(int argc, char *argv[]) {
        "Margin between notes and screen edge (0)", NULL},
       {"angle", 'a', G_OPTION_FLAG_NONE, G_OPTION_ARG_DOUBLE, &note_angle,
        "Angle of the notes (random)", NULL},
+      // TODO: multiple csv colors
       {"bg", 'b', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_bg,
        "Color of the notes (random)", NULL},
       {"color", 'c', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_color,
