@@ -102,6 +102,7 @@ public:
       note->nw = width;
       note->nh = height;
     }
+    gtk_widget_grab_focus(note->text_area);
   }
 
   static void draw_cb(GtkDrawingArea *drawing_area, cairo_t *cr, int width,
