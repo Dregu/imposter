@@ -65,20 +65,6 @@ void replace(std::string &subject, const std::string &search,
 
 class Note {
 public:
-  static void key_press(GtkEventControllerKey *self, guint keyval,
-                        guint keycode, GdkModifierType state, gpointer data) {
-    auto note = reinterpret_cast<Note *>(data);
-    if (keyval == GDK_KEY_Escape)
-      note->close();
-  }
-
-  static void middle_press(GtkGestureClick *gesture, int n_press, double x,
-                           double y, gpointer data) {
-    auto note = reinterpret_cast<Note *>(data);
-    note->clear_surface();
-    gtk_widget_queue_draw(note->drawing);
-  }
-
   void clear_surface(void) {
     cairo_t *cr = cairo_create(surface);
     cairo_set_source_rgba(cr, 1, 1, 1, 0);
@@ -196,12 +182,45 @@ public:
   static void enter(GtkEventControllerMotion *self, double x, double y,
                     gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
+    gtk_layer_set_keyboard_mode(note->win,
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
     gtk_widget_grab_focus(note->text_area);
   }
 
   static void leave(GtkEventControllerMotion *self, double x, double y,
                     gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
+    gtk_layer_set_keyboard_mode(note->win,
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+    gtk_root_set_focus(GTK_ROOT(note->win), NULL);
+  }
+
+  static void key_press(GtkEventControllerKey *self, guint keyval,
+                        guint keycode, GdkModifierType state, gpointer data) {
+    auto note = reinterpret_cast<Note *>(data);
+    std::printf("key %d %d\n", (int)keyval, (int)state);
+    if (keyval == GDK_KEY_Escape) {
+      gtk_layer_set_keyboard_mode(note->win,
+                                  GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+      gtk_root_set_focus(GTK_ROOT(note->win), NULL);
+    } else if (keyval == GDK_KEY_q && state == GDK_CONTROL_MASK) {
+      gtk_layer_set_keyboard_mode(note->win,
+                                  GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+      gtk_root_set_focus(GTK_ROOT(note->win), NULL);
+      note->close();
+    }
+  }
+
+  static void middle_press(GtkGestureClick *gesture, int n_press, double x,
+                           double y, gpointer data) {
+    auto note = reinterpret_cast<Note *>(data);
+    note->clear_surface();
+    gtk_widget_queue_draw(note->drawing);
+  }
+
+  static void realize(GtkEventControllerMotion *self, gpointer data) {
+    auto note = reinterpret_cast<Note *>(data);
+    gtk_widget_grab_focus(note->text_area);
   }
 
   void close(void) {
@@ -276,6 +295,7 @@ textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bo
     auto *motion = gtk_event_controller_motion_new();
     gtk_widget_add_controller(GTK_WIDGET(frame), GTK_EVENT_CONTROLLER(motion));
     g_signal_connect(motion, "enter", G_CALLBACK(enter), this);
+    g_signal_connect(motion, "motion", G_CALLBACK(enter), this);
     g_signal_connect(motion, "leave", G_CALLBACK(leave), this);
 
     auto *keys = gtk_event_controller_key_new();
@@ -293,7 +313,9 @@ textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bo
     gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(drawing), draw_cb, this,
                                    NULL);
     g_signal_connect_after(drawing, "resize", G_CALLBACK(resize_cb), this);
+    g_signal_connect_after(text_area, "realize", G_CALLBACK(realize), this);
 
+    gtk_layer_set_keyboard_mode(win, GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
     return frame;
   }
 
@@ -323,16 +345,6 @@ textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bo
 
 class Imposter {
 public:
-  static void key_press(GtkEventControllerKey *self, guint keyval,
-                        guint keycode, GdkModifierType state, gpointer data) {
-    auto win = reinterpret_cast<Imposter *>(data);
-    if (keyval == GDK_KEY_Tab) {
-      win->note();
-    } else if (keyval == GDK_KEY_Escape) {
-      gtk_window_destroy(win->window);
-    }
-  }
-
   Imposter(GtkApplication *app_, [[maybe_unused]] gpointer data) { app = app_; }
 
   void fix_input_region() {
@@ -370,6 +382,8 @@ public:
 
   void note() {
     gtk_widget_set_visible(GTK_WIDGET(window), TRUE);
+    gtk_layer_set_layer(window, GTK_LAYER_SHELL_LAYER_OVERLAY);
+
     auto surf =
         gtk_native_get_surface(gtk_widget_get_native(GTK_WIDGET(window)));
     // TODO: fix multi monitor switching
@@ -492,7 +506,7 @@ window {{ background: alpha(black, 0); }}
     fixed = gtk_fixed_new();
     gtk_window_set_child(GTK_WINDOW(window), fixed);
     gtk_layer_set_keyboard_mode(window,
-                                GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
+                                GTK_LAYER_SHELL_KEYBOARD_MODE_EXCLUSIVE);
 
     if (!note_exclusive) {
       gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
@@ -611,7 +625,8 @@ Controls:
   Mouse Left                       Draw on a note
   Mouse Right                      Move a note around
   Mouse Middle                     Clear drawing
-  Escape                           Destroy a note
+  Escape                           Restore exclusive focus from new note
+  Ctrl+Q                           Destroy focused note
 )"");
   g_signal_connect(app, "activate", G_CALLBACK(activate), NULL);
   g_signal_connect(G_APPLICATION(app), "handle-local-options",
