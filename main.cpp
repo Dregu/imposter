@@ -90,15 +90,22 @@ public:
   static void resize_cb(GtkWidget *widget, int width, int height,
                         gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
-    if (note->surface) {
-      cairo_surface_destroy(note->surface);
-      note->surface = NULL;
-    }
     if (gtk_native_get_surface(gtk_widget_get_native(widget))) {
-      note->surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
-                                                 gtk_widget_get_width(widget),
-                                                 gtk_widget_get_height(widget));
-      note->clear_surface();
+      auto new_w = gtk_widget_get_width(widget);
+      auto new_h = gtk_widget_get_height(widget);
+      auto new_surface =
+          cairo_image_surface_create(CAIRO_FORMAT_ARGB32, new_w, new_h);
+      if (note->surface) {
+        cairo_t *cr = cairo_create(new_surface);
+        cairo_set_source_surface(cr, note->surface, 0, 0);
+        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
+        cairo_rectangle(cr, 0, 0, note->nw, note->nh);
+        cairo_paint(cr);
+        cairo_surface_destroy(note->surface);
+      } else {
+        note->clear_surface();
+      }
+      note->surface = new_surface;
       note->nw = width;
       note->nh = height;
     }
