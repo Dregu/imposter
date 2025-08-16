@@ -34,6 +34,7 @@ const char *note_pen_color;
 const char *note_output;
 const char *note_gravity;
 const char *note_organize;
+bool note_cross = false;
 
 int monitor_w, monitor_h;
 
@@ -65,12 +66,36 @@ void replace(std::string &subject, const std::string &search,
 
 class Note {
 public:
+  void draw_cross() {
+    static const int size = 8;
+    static const int margin = 8;
+    GdkRGBA color;
+    gdk_rgba_parse(&color, "rgba(0, 0, 0, 0.15)");
+    cairo_t *cr = cairo_create(surface);
+    cairo_set_line_width(cr, 2.0);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha);
+
+    cairo_move_to(cr, nw - margin - size, margin);
+    cairo_line_to(cr, nw - margin, margin + size);
+    cairo_stroke(cr);
+
+    cairo_move_to(cr, nw - margin - size, margin + size);
+    cairo_line_to(cr, nw - margin, margin);
+    cairo_stroke(cr);
+
+    cairo_destroy(cr);
+    gtk_widget_queue_draw(drawing);
+  }
+
   void clear_surface(void) {
     cairo_t *cr = cairo_create(surface);
     cairo_set_source_rgba(cr, 1, 1, 1, 0);
     cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
     cairo_paint(cr);
     cairo_destroy(cr);
+    if (note_cross)
+      draw_cross();
   }
 
   static void resize_cb(GtkWidget *widget, int width, int height,
@@ -94,6 +119,8 @@ public:
       note->surface = new_surface;
       note->nw = width;
       note->nh = height;
+      if (note_cross)
+        note->draw_cross();
     }
     gtk_widget_grab_focus(note->text_area);
   }
@@ -198,7 +225,6 @@ public:
   static void key_press(GtkEventControllerKey *self, guint keyval,
                         guint keycode, GdkModifierType state, gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
-    std::printf("key %d %d\n", (int)keyval, (int)state);
     if (keyval == GDK_KEY_Escape) {
       gtk_layer_set_keyboard_mode(note->win,
                                   GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
@@ -214,8 +240,12 @@ public:
   static void middle_press(GtkGestureClick *gesture, int n_press, double x,
                            double y, gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
-    note->clear_surface();
-    gtk_widget_queue_draw(note->drawing);
+    if (note_cross && x > note->nw - 16 && y < 16) {
+      note->close();
+    } else {
+      note->clear_surface();
+      gtk_widget_queue_draw(note->drawing);
+    }
   }
 
   static void realize(GtkEventControllerMotion *self, gpointer data) {
@@ -290,7 +320,7 @@ textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bo
     GtkGesture *press = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(press), GDK_BUTTON_MIDDLE);
     gtk_widget_add_controller(drawing, GTK_EVENT_CONTROLLER(press));
-    g_signal_connect(press, "pressed", G_CALLBACK(middle_press), this);
+    g_signal_connect_after(press, "released", G_CALLBACK(middle_press), this);
 
     auto *motion = gtk_event_controller_motion_new();
     gtk_widget_add_controller(GTK_WIDGET(frame), GTK_EVENT_CONTROLLER(motion));
@@ -609,6 +639,8 @@ int main(int argc, char *argv[]) {
        "Stick notes on specific screen edge (center)", "l|r|t|b|tl..."},
       {"organize", 'z', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_organize,
        "Add new note next to previous one in direction", "l|r|t|b|rl|bt"},
+      {"cross", 'X', G_OPTION_FLAG_NONE, G_OPTION_ARG_NONE, &note_cross,
+       "Add a little close button in the corner", NULL},
       {"output", 'o', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_output,
        "Monitor output name", NULL},
       {NULL}};
@@ -622,9 +654,9 @@ int main(int argc, char *argv[]) {
   pkill -SIGUSR2 imposter          Create a new note
 
 Controls:
-  Mouse Left                       Draw on a note
-  Mouse Right                      Move a note around
-  Mouse Middle                     Clear drawing
+  Mouse Left                       Draw on note
+  Mouse Right                      Move note around
+  Mouse Middle                     Clear drawing / Destroy note on close button
   Escape                           Restore exclusive focus from new note
   Ctrl+Q                           Destroy focused note
 )"");
