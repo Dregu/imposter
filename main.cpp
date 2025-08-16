@@ -74,6 +74,7 @@ public:
     cairo_t *cr = cairo_create(surface);
     cairo_set_line_width(cr, 2.0);
     cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
     cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha);
 
     cairo_move_to(cr, nw - margin - size, margin);
@@ -109,9 +110,9 @@ public:
       if (note->surface) {
         cairo_t *cr = cairo_create(new_surface);
         cairo_set_source_surface(cr, note->surface, 0, 0);
-        cairo_set_operator(cr, CAIRO_OPERATOR_SOURCE);
         cairo_rectangle(cr, 0, 0, note->nw, note->nh);
         cairo_paint(cr);
+        cairo_destroy(cr);
         cairo_surface_destroy(note->surface);
       } else {
         note->clear_surface();
@@ -248,7 +249,7 @@ public:
     }
   }
 
-  static void realize(GtkEventControllerMotion *self, gpointer data) {
+  static void realize(GtkWidget *self, gpointer data) {
     auto note = reinterpret_cast<Note *>(data);
     gtk_widget_grab_focus(note->text_area);
   }
