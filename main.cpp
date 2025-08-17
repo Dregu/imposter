@@ -222,7 +222,7 @@ class Note
         gtk_widget_grab_focus(note->text_area);
     }
 
-    static void leave(GtkEventControllerMotion* self, double x, double y, gpointer data)
+    static void leave(GtkEventControllerMotion* self, gpointer data)
     {
         auto note = reinterpret_cast<Note*>(data);
         gtk_layer_set_keyboard_mode(note->win, GTK_LAYER_SHELL_KEYBOARD_MODE_ON_DEMAND);
