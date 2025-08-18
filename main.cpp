@@ -25,6 +25,7 @@ double note_angle = FLT_MIN;
 const char* note_bg;
 const char* note_color;
 const char* note_font;
+const char* note_line;
 const char* note_exclusive;
 const char* note_text;
 const char* note_pen_color;
@@ -290,12 +291,13 @@ class Note
         auto css = std::format(
             R""(
 frame {{ margin: {}px; border: none; transform: rotate({}deg); }}
-textview {{ color: {}; font: {}; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
+textview {{ color: {}; font: {}; line-height: {}; padding: 8px; background: linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.33)), {}; }}
 )"",
             extra_margin,
             note_angle == FLT_MIN ? rand_float(-3.f, 3.f) : note_angle,
             note_color ? note_color : "#222",
             note_font ? note_font : "bold 1.5em 'Comic Neue'",
+            note_line ? note_line : "normal",
             note_bg ? note_bg : colors[rand_int(0, colors.size() - 1)]);
         gtk_css_provider_load_from_string(provider, css.c_str());
         text_area = gtk_text_view_new();
@@ -657,6 +659,7 @@ int main(int argc, char* argv[])
         {"color", 'c', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_color, "Color of the text (#222)", NULL},
         {"pen", 'p', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_pen_color, "Color of the pen (#222)", NULL},
         {"font", 'f', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_font, "Font of the text (bold 1.5em 'Comic Neue')", NULL},
+        {"line", 'l', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_line, "Line height (normal)", NULL},
         {"text", 't', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_text, "Text on the first note", NULL},
         {"exclusive", 'e', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_exclusive, "Reserve exclusive zone on screen edge", "l|r|t|b"},
         {"gravity", 'g', G_OPTION_FLAG_NONE, G_OPTION_ARG_STRING, &note_gravity, "Stick notes on specific screen edge (center)", "l|r|t|b|tl..."},
