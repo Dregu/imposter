@@ -249,7 +249,7 @@ class Note
     static void middle_press(GtkGestureClick* gesture, int n_press, double x, double y, gpointer data)
     {
         auto note = reinterpret_cast<Note*>(data);
-        if (note_cross && x > note->nw - 16 && y < 16)
+        if (note_cross && x > note->nw - 32 && y < 32)
         {
             note->close();
         }
