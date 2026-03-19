@@ -390,9 +390,7 @@ class Imposter
 {
   public:
     Imposter(GtkApplication* app_, [[maybe_unused]] gpointer data)
-    {
-        app = app_;
-    }
+    { app = app_; }
 
     void fix_input_region()
     {
@@ -569,6 +567,7 @@ window {{ background: alpha(black, 0); }}
             gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_RIGHT, TRUE);
             gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_TOP, TRUE);
             gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
+            gtk_layer_set_exclusive_zone(window, -1);
         }
         else
         {
@@ -627,9 +626,7 @@ static void signal_handler(int sig)
 }
 
 static int command_line(GApplication* app, GVariantDict* opts, void*)
-{
-    return -1;
-}
+{ return -1; }
 
 static void activate(GtkApplication* app, gpointer data)
 {
